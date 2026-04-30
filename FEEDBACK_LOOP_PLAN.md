@@ -1,0 +1,388 @@
+# OpenSCAD Feedback Loop Improvement Plan
+
+## Goal
+Improve the model generation and repair loop so the app can:
+
+1. surface specific compile/runtime errors back to the LLM,
+2. automatically attempt targeted fixes,
+3. include rendered preview images from multiple viewpoints when useful,
+4. keep the user informed about what failed and what retry is happening,
+5. avoid endless retry loops.
+
+---
+
+## Current Issues Observed
+
+### 1. Invalid model output reaches the compiler
+Examples seen so far:
+- plain English text at the top of the generated file,
+- invalid OpenSCAD syntax,
+- reserved keywords used as variables,
+- malformed `for` syntax,
+- invalid geometry assignment patterns.
+
+### 2. Compile feedback is not part of the generation loop
+Right now the app shows compile errors in preview, but the generation flow does not reliably:
+- feed exact OpenSCAD errors back into model repair,
+- associate those errors with the specific artifact version that failed,
+- retry with structured context.
+
+### 3. Visual feedback is missing from repair prompts
+For geometry that technically compiles but is wrong, the LLM has no rendered images from the app preview.
+
+### 4. No bounded repair state machine
+A robust loop needs:
+- explicit states,
+- retry counters,
+- artifact-version matching,
+- cancellation when the user edits/selects something else.
+
+---
+
+## Proposed Design
+
+## Phase 1: Structured compile feedback pipeline
+
+### A. Add compile result callbacks from preview to app state
+Introduce a callback from the preview stack up into app state so the app receives structured results for the currently selected artifact.
+
+Suggested shape:
+
+```ts
+type ArtifactCompileReport = {
+  artifactId: string;
+  codeHash: string;
+  status: 'success' | 'error';
+  errorMessage?: string;
+  stdErr?: string[];
+  fileType?: 'stl' | 'svg';
+  generatedAt: number;
+};
+```
+
+The preview component should emit a report whenever:
+- compile succeeds,
+- compile fails,
+- a newer compile supersedes an older one.
+
+### B. Tie reports to a specific artifact version
+Do not repair based only on “selected artifact”.
+Each report should include:
+- `artifactId`,
+- a `codeHash` of the code that was compiled.
+
+This prevents stale worker results from triggering repairs against a newer artifact.
+
+### C. Normalize OpenSCAD errors before repair
+Create a helper that turns verbose OpenSCAD stderr into a compact repair payload.
+
+Example normalized payload:
+
+```ts
+type NormalizedCompileError = {
+  summary: string;
+  line?: number;
+  column?: number;
+  relevantStdErr: string[];
+};
+```
+
+Parsing rules:
+- extract `line N` when present,
+- keep the first parser/runtime error,
+- keep a few nearby stderr lines,
+- drop noisy/non-actionable lines such as localization warnings unless they are the only signal.
+
+---
+
+## Phase 2: Automatic one-shot repair loop
+
+### A. Add repair state to `useCadApp`
+Track repair attempts in app state/ref, keyed by artifact/code hash.
+
+Suggested tracking model:
+
+```ts
+type RepairAttemptState = {
+  artifactId: string;
+  codeHash: string;
+  attempts: number;
+  status: 'idle' | 'repairing' | 'failed' | 'succeeded';
+  lastError?: string;
+};
+```
+
+### B. Trigger repair only under strict conditions
+Auto-repair should run only when:
+- the artifact came from assistant generation,
+- compile failed,
+- the failure corresponds to the currently selected artifact version,
+- the app is not already generating,
+- attempts for this artifact/code hash are below a small limit.
+
+Recommended initial limit:
+- `1` automatic retry for syntax/compile failures.
+
+### C. Reuse existing `build_parametric_model` pathway
+The current tool schema already supports an `error` field.
+Use that instead of inventing a new generation path.
+
+Repair request should include:
+- current broken code as `baseCode`,
+- normalized compile error string as `error`,
+- original user intent if available,
+- optionally image IDs once image capture exists.
+
+Example repair instruction payload:
+
+```json
+{
+  "text": "Fix this OpenSCAD model so it compiles and preserves the intended design.",
+  "baseCode": "...broken code...",
+  "error": "Parser error: syntax error in file /input.scad, line 1. The first line is not valid OpenSCAD.",
+  "imageIds": []
+}
+```
+
+### D. Surface repair progress in chat UI
+While repair is happening, show a compact assistant status such as:
+- `Repairing model from compile error…`
+- `Retry failed: parser error on line 1`
+
+This should appear as a tool/status state rather than silently mutating the model.
+
+---
+
+## Phase 3: Multi-view render capture for visual feedback
+
+### A. Capture preview snapshots from the 3D viewport
+Add a render capture utility to the preview viewport using the underlying Three.js renderer/canvas.
+
+Target viewpoints:
+- front,
+- top,
+- right,
+- isometric.
+
+Recommended output:
+- PNG data URLs,
+- modest resolution like 512×512,
+- one batch captured after successful compile and geometry load.
+
+### B. Add snapshot metadata type
+Suggested shape:
+
+```ts
+type ArtifactSnapshot = {
+  id: string;
+  artifactId: string;
+  codeHash: string;
+  view: 'front' | 'top' | 'right' | 'iso';
+  mediaType: 'image/png';
+  dataUrl: string;
+  createdAt: number;
+};
+```
+
+### C. Store only recent snapshots
+Avoid bloating state.
+Keep snapshots only for:
+- the selected artifact,
+- optionally the most recent successful compile for recent assistant artifacts.
+
+### D. Use snapshots only when supported by the selected model
+Not every model supports vision.
+Repair flow should:
+- include images only when `supportsVision === true`,
+- otherwise fall back to text-only error context.
+
+### E. Use snapshots mainly for semantic/geometry repair
+Snapshot-assisted repair is most helpful when:
+- the model compiles but looks wrong,
+- bores are missing,
+- proportions are off,
+- orientation is wrong,
+- a requested feature did not appear.
+
+For pure parser errors, compile stderr is usually enough.
+
+---
+
+## Phase 4: “Compile OK but visually wrong” feedback loop
+
+### A. Add user-invoked repair action
+Auto-repair is best for syntax/compile failures.
+For geometry issues, add a user-triggered action like:
+- `Fix preview`
+- `Regenerate from preview`
+- `Explain mismatch`
+
+This action should package:
+- current code,
+- latest snapshots,
+- the user’s correction text.
+
+### B. Feed back visual discrepancy prompts
+Example prompt payload:
+
+```json
+{
+  "text": "The model compiles, but the center bore is missing and the teeth are too blocky. Keep the outer diameter similar.",
+  "baseCode": "...current code...",
+  "imageIds": ["front", "iso", "top"]
+}
+```
+
+---
+
+## Phase 5: Prompt and validation improvements
+
+### A. Tighten strict OpenSCAD prompt
+Update the strict code prompt so it explicitly forbids non-code output and common invalid patterns.
+
+Add rules such as:
+- first line must be valid OpenSCAD or a comment,
+- never prepend explanations,
+- do not use reserved keywords as variable names,
+- use valid OpenSCAD loop syntax,
+- use `r`/`d` for cylinders,
+- avoid assigning geometry expressions to variables.
+
+### B. Add local validation before preview compile
+Before sending code to OpenSCAD, run a cheap validator for obvious issues:
+- suspicious prose on line 1,
+- unmatched delimiters,
+- `for (... in ...)` patterns,
+- `radius =` on cylinders,
+- variable named `module`, `color`, etc. when risky.
+
+This validator does **not** replace OpenSCAD compilation.
+It just catches trivial bad generations early and produces clearer repair context.
+
+### C. Add code sanitation before artifact commit
+Before storing a generated artifact:
+- strip markdown fences,
+- extract likely SCAD blocks,
+- remove obvious leading prose,
+- normalize line endings.
+
+If sanitation still yields low-confidence code, mark the tool call as failed instead of committing the artifact.
+
+---
+
+## State Machine Proposal
+
+```text
+user prompt
+  -> planner/tool call
+  -> code generation
+  -> sanitize/validate
+  -> preview compile
+      -> success
+           -> capture snapshots
+           -> ready
+      -> error
+           -> normalize compile error
+           -> if retry budget remains
+                -> repair request
+                -> generated code
+                -> sanitize/validate
+                -> preview compile again
+           -> else
+                -> show error to user
+```
+
+Important invariants:
+- one in-flight repair per artifact/code hash,
+- stale compile results ignored,
+- repair cancelled if user changes selected artifact or sends a new prompt,
+- hard retry limit.
+
+---
+
+## Suggested Implementation Order
+
+### Step 1
+Add structured compile report callbacks from preview to app.
+
+### Step 2
+Add normalized compile error extraction helper.
+
+### Step 3
+Add one-shot auto-repair on compile failure using existing agent tooling.
+
+### Step 4
+Add UI state for repair progress and failure reporting.
+
+### Step 5
+Add multi-view snapshot capture after successful preview renders.
+
+### Step 6
+Plumb snapshots into repair/generation for vision-capable models.
+
+### Step 7
+Add user-invoked visual repair flow for “looks wrong” cases.
+
+---
+
+## Risks / Things to Watch
+
+### 1. Infinite repair loops
+Mitigation:
+- retry cap,
+- artifact/code-hash tracking,
+- skip auto-repair on unchanged regenerated code.
+
+### 2. Excess token usage from images
+Mitigation:
+- use only 2–4 compact snapshots,
+- only send them when necessary,
+- only for vision models.
+
+### 3. Race conditions between preview and repair
+Mitigation:
+- attach `artifactId` + `codeHash` to reports,
+- ignore stale callback results.
+
+### 4. Large state payloads from data URLs
+Mitigation:
+- keep snapshots ephemeral,
+- avoid persisting them to local storage,
+- retain only latest successful set.
+
+### 5. Poor repair quality from noisy stderr
+Mitigation:
+- normalize errors,
+- keep only relevant lines,
+- provide line-number-specific context where available.
+
+---
+
+## Deliverables
+
+### Milestone 1: Robust compile error repair
+- compile reports wired to app state,
+- normalized error extraction,
+- single automatic repair retry,
+- user-visible repair status.
+
+### Milestone 2: Visual feedback support
+- multi-view snapshot capture,
+- snapshot storage for latest good preview,
+- optional image inclusion in repair prompts.
+
+### Milestone 3: Visual correction workflow
+- explicit user action to repair based on preview mismatch,
+- improved prompting for geometry corrections.
+
+---
+
+## Recommendation
+Start with **Milestone 1** first.
+
+Reason:
+- it directly solves the current parser-error workflow,
+- it is lower-risk than image plumbing,
+- it lays the state-management foundation needed for snapshot-based repair later.
+
+Once that is stable, add snapshot capture and vision-assisted repair as Milestone 2.
