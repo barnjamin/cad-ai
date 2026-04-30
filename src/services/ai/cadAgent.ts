@@ -1,3 +1,4 @@
+import { hashText } from '../../core/hash';
 import type {
   AiProviderId,
   Attachment,
@@ -67,6 +68,20 @@ type RunCadAgentArgs = {
   messages: ConversationMessage[];
   onUpdate: (content: MessageContent) => void;
   signal?: AbortSignal;
+};
+
+type BuildParametricModelArtifactArgs = {
+  providerId: AiProviderId;
+  apiKey?: string;
+  modelId: ModelId;
+  supportsVision: boolean;
+  conversation: ConversationMessage[];
+  promptText: string;
+  baseCode?: string;
+  error?: string;
+  imageAttachments?: Attachment[];
+  signal?: AbortSignal;
+  source?: CadArtifact['source'];
 };
 
 type AccumulatedToolCall = {
@@ -168,7 +183,7 @@ export async function runCadAgent({
         providerId,
         apiKey,
         modelId,
-        llmMessages,
+        supportsVision,
         conversation: messages,
         toolCall,
         content,
@@ -197,7 +212,10 @@ export async function runCadAgent({
       content = {
         ...content,
         text: undefined,
-        artifact: createArtifact(makeTitleFromPrompt(getLastUserText(messages)), extractedCode),
+        artifact: createArtifact(makeTitleFromPrompt(getLastUserText(messages)), extractedCode, {
+          intentText: getLastUserText(messages),
+          source: 'assistant-generated',
+        }),
       };
       sync();
     }
@@ -212,11 +230,79 @@ export async function runCadAgent({
   }
 }
 
+export async function buildParametricModelArtifact({
+  providerId,
+  apiKey,
+  modelId,
+  supportsVision,
+  conversation,
+  promptText,
+  baseCode,
+  error,
+  imageAttachments,
+  signal,
+  source = error ? 'assistant-repaired' : 'assistant-generated',
+}: BuildParametricModelArtifactArgs) {
+  const provider = getAiProvider(providerId);
+  const title = makeTitleFromPrompt(promptText);
+  const repairInstruction = error
+    ? `${promptText}\n\nFix this OpenSCAD model so it compiles and preserves the intended design.\n\n${error}`
+    : promptText;
+
+  const codeMessages: ChatMessage[] = [
+    ...toChatMessages(conversation, supportsVision),
+    ...(baseCode ? ([{ role: 'assistant', content: baseCode }] satisfies ChatMessage[]) : []),
+    {
+      role: 'user',
+      content: buildPromptBlocks(repairInstruction, supportsVision, imageAttachments),
+    },
+  ];
+
+  let rawCode = '';
+
+  await streamChatCompletions({
+    providerId,
+    url: provider.chatCompletionsUrl,
+    apiKey,
+    signal,
+    request: {
+      model: modelId,
+      messages: [{ role: 'system', content: STRICT_OPENSCAD_PROMPT }, ...codeMessages],
+      stream: true,
+      max_tokens: 24000,
+    },
+    onChunk: (chunk) => {
+      throwIfChunkError(chunk);
+      const deltaText = chunk.choices?.[0]?.delta?.content;
+      if (typeof deltaText !== 'string' || !deltaText) return;
+      rawCode += deltaText;
+    },
+  });
+
+  const finalCode = normalizeGeneratedOpenScad(rawCode);
+  console.log('[AI IN model code raw]', rawCode);
+  console.log('[AI IN model code final]', finalCode);
+
+  if (!finalCode || finalCode === '404') {
+    throw new Error('The model response did not include valid OpenSCAD code.');
+  }
+
+  const validation = validateGeneratedOpenScad(finalCode);
+  if (!validation.ok) {
+    throw new Error(validation.issues[0] || 'The generated OpenSCAD failed validation.');
+  }
+
+  return createArtifact(title, finalCode, {
+    intentText: promptText,
+    source,
+  });
+}
+
 async function executeToolCall(args: {
   providerId: AiProviderId;
   apiKey?: string;
   modelId: ModelId;
-  llmMessages: ChatMessage[];
+  supportsVision: boolean;
   conversation: ConversationMessage[];
   toolCall: AccumulatedToolCall;
   content: MessageContent;
@@ -242,7 +328,7 @@ async function executeBuildModelTool(args: {
   providerId: AiProviderId;
   apiKey?: string;
   modelId: ModelId;
-  llmMessages: ChatMessage[];
+  supportsVision: boolean;
   conversation: ConversationMessage[];
   toolCall: AccumulatedToolCall;
   content: MessageContent;
@@ -267,64 +353,41 @@ async function executeBuildModelTool(args: {
     return failedContent;
   }
 
-  const latestArtifact = getLatestArtifact(args.conversation, args.content);
-  const baseCode = parsedInput.baseCode ?? latestArtifact?.code;
-  const rawPrompt = parsedInput.text || getLastUserText(args.conversation);
-  const title = makeTitleFromPrompt(rawPrompt);
-  const supplementalPrompt = parsedInput.error
-    ? `${rawPrompt}\n\nFix this OpenSCAD issue: ${parsedInput.error}`
-    : rawPrompt;
+  try {
+    const latestArtifact = getLatestArtifact(args.conversation, args.content);
+    const artifact = await buildParametricModelArtifact({
+      providerId: args.providerId,
+      apiKey: args.apiKey,
+      modelId: args.modelId,
+      supportsVision: args.supportsVision,
+      conversation: args.conversation,
+      promptText: parsedInput.text || getLastUserText(args.conversation),
+      baseCode: parsedInput.baseCode ?? latestArtifact?.code,
+      error: parsedInput.error,
+      signal: args.signal,
+      source: parsedInput.error ? 'assistant-repaired' : 'assistant-generated',
+    });
 
-  const provider = getAiProvider(args.providerId);
+    const nextContent = {
+      ...args.content,
+      toolCalls: removeToolCall(args.content.toolCalls, args.toolCall.id),
+      artifact,
+      text: args.content.text,
+    } satisfies MessageContent;
 
-  const codeMessages: ChatMessage[] = [
-    ...args.llmMessages,
-    ...(baseCode ? ([{ role: 'assistant', content: baseCode }] satisfies ChatMessage[]) : []),
-    { role: 'user', content: supplementalPrompt },
-  ];
-
-  let rawCode = '';
-  let nextContent = args.content;
-
-  await streamChatCompletions({
-    providerId: args.providerId,
-    url: provider.chatCompletionsUrl,
-    apiKey: args.apiKey,
-    signal: args.signal,
-    request: {
-      model: args.modelId,
-      messages: [{ role: 'system', content: STRICT_OPENSCAD_PROMPT }, ...codeMessages],
-      stream: true,
-      max_tokens: 24000,
-    },
-    onChunk: (chunk) => {
-      throwIfChunkError(chunk);
-      const deltaText = chunk.choices?.[0]?.delta?.content;
-      if (typeof deltaText !== 'string' || !deltaText) return;
-
-      rawCode += deltaText;
-    },
-  });
-
-  const finalCode = normalizeGeneratedOpenScad(rawCode);
-  console.log('[AI IN model code raw]', rawCode);
-  console.log('[AI IN model code final]', finalCode);
-  if (!finalCode || finalCode === '404' || !isLikelyCompleteOpenScad(finalCode)) {
-    nextContent = {
-      ...markToolCallAsErrored(nextContent, args.toolCall.id),
-      text: 'The model response looked incomplete. Please try again.',
-    };
+    args.sync(nextContent);
+    return nextContent;
+  } catch (error) {
+    const nextContent = {
+      ...markToolCallAsErrored(args.content, args.toolCall.id),
+      text:
+        error instanceof Error
+          ? `The model response looked invalid: ${error.message}`
+          : 'The model response looked invalid. Please try again.',
+    } satisfies MessageContent;
     args.sync(nextContent);
     return nextContent;
   }
-
-  nextContent = {
-    ...nextContent,
-    toolCalls: removeToolCall(nextContent.toolCalls, args.toolCall.id),
-    artifact: createArtifact(title, finalCode),
-  };
-  args.sync(nextContent);
-  return nextContent;
 }
 
 async function executeParameterPatchTool(args: {
@@ -367,7 +430,12 @@ async function executeParameterPatchTool(args: {
   const nextContent: MessageContent = {
     ...args.content,
     toolCalls: removeToolCall(args.content.toolCalls, args.toolCall.id),
-    artifact: createArtifact(baseArtifact.title, code),
+    artifact: createArtifact(baseArtifact.title, code, {
+      id: baseArtifact.id,
+      version: baseArtifact.version,
+      intentText: baseArtifact.intentText,
+      source: 'assistant-generated',
+    }),
   };
 
   args.sync(nextContent);
@@ -421,13 +489,27 @@ function getLastUserText(messages: ConversationMessage[]) {
   return [...messages].reverse().find((message) => message.role === 'user')?.content.text || '3D model';
 }
 
-function createArtifact(title: string, code: string, parameters = parseCadParameters(code)): CadArtifact {
+function createArtifact(
+  title: string,
+  code: string,
+  options: {
+    id?: string;
+    version?: string;
+    intentText?: string;
+    source?: CadArtifact['source'];
+    parameters?: CadArtifact['parameters'];
+  } = {},
+): CadArtifact {
   return {
-    id: crypto.randomUUID(),
+    id: options.id ?? crypto.randomUUID(),
     title,
-    version: 'v1',
+    version: options.version ?? 'v1',
     code,
-    parameters,
+    codeHash: hashText(code),
+    parameters: options.parameters ?? parseCadParameters(code),
+    source: options.source ?? 'assistant-generated',
+    intentText: options.intentText,
+    updatedAt: Date.now(),
   };
 }
 
@@ -487,15 +569,56 @@ function stripCodeFences(value: string) {
 
 function normalizeGeneratedOpenScad(value: string) {
   const extractedCode = extractOpenScadCode(value);
-  if (extractedCode) return extractedCode.trim();
+  const stripped = (extractedCode ?? stripCodeFences(value)).trim();
+  const lines = stripped.split('\n').map((line) => line.trimEnd());
+  const firstCodeIndex = lines.findIndex((line) => isLikelyCodeLine(line));
+  const slicedLines = firstCodeIndex > 0 ? lines.slice(firstCodeIndex) : lines;
 
-  const stripped = stripCodeFences(value).trim();
-  const lines = stripped
-    .split('\n')
-    .map((line) => line.trimEnd())
-    .filter((line, index) => !(index === 0 && /^here(?:'s| is)\b/i.test(line)));
+  return slicedLines
+    .filter((line, index) => !(index === 0 && /^here(?:'s| is)\b/i.test(line.trim())))
+    .join('\n')
+    .trim();
+}
 
-  return lines.join('\n').trim();
+function validateGeneratedOpenScad(code: string) {
+  const issues: string[] = [];
+  const firstMeaningfulLine =
+    code
+      .split('\n')
+      .map((line) => line.trim())
+      .find(Boolean) ?? '';
+
+  if (firstMeaningfulLine && !isLikelyCodeLine(firstMeaningfulLine)) {
+    issues.push('The first line does not look like valid OpenSCAD.');
+  }
+
+  if (/\bfor\s*\([^)]*\bin\b[^)]*\)/i.test(code)) {
+    issues.push('The code uses a suspicious for (... in ...) loop syntax.');
+  }
+
+  if (/\bcylinder\s*\([^)]*\bradius\s*=/i.test(code)) {
+    issues.push('Use cylinder(r=...) or cylinder(d=...), not cylinder(radius=...).');
+  }
+
+  if (/^(?!\s*(?:\/\/|\/\*|\*|$))[A-Z][^.\n]*$/m.test(firstMeaningfulLine)) {
+    issues.push('The response appears to start with prose instead of code.');
+  }
+
+  if (!isLikelyCompleteOpenScad(code)) {
+    issues.push('The generated OpenSCAD looks incomplete or has unmatched delimiters.');
+  }
+
+  return { ok: issues.length === 0, issues };
+}
+
+function isLikelyCodeLine(line: string) {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  if (/^(\/\/|\/\*|\*)/.test(trimmed)) return true;
+  if (/[;={}()[\]]/.test(trimmed)) return true;
+  return /^(include|use|module|function|color|translate|rotate|scale|mirror|linear_extrude|rotate_extrude|difference|union|intersection|cube|cylinder|sphere|polygon|polyhedron|circle|square|text|import|surface|projection|render|offset|hull|minkowski|multmatrix|resize|assign|echo|if|for|let|[a-z_$][a-z0-9_$]*)\b/i.test(
+    trimmed,
+  );
 }
 
 function isLikelyCompleteOpenScad(code: string) {
@@ -575,6 +698,25 @@ function isLikelyCompleteOpenScad(code: string) {
 
   const trimmed = code.trim();
   return /[;)}\]]$/.test(trimmed);
+}
+
+function buildPromptBlocks(
+  promptText: string,
+  supportsVision: boolean,
+  imageAttachments?: Attachment[],
+): ChatMessage['content'] {
+  const blocks: ChatMessage['content'] = [{ type: 'text', text: promptText }];
+
+  if (supportsVision) {
+    for (const attachment of imageAttachments ?? []) {
+      blocks.push({
+        type: 'image_url',
+        image_url: { url: attachment.dataUrl, detail: 'auto' },
+      });
+    }
+  }
+
+  return blocks;
 }
 
 function throwIfChunkError(chunk: ChatStreamChunk) {

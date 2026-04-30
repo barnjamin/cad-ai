@@ -44,3 +44,9 @@ Provide an OpenRouter API key either by:
 - Conversation state is currently in-memory only.
 - OpenSCAD compilation and export stay local in the browser worker.
 - Visual styling is intentionally minimal; the core architecture is the focus.
+
+
+
+# OpenSCAD Language Reference
+
+https://en.wikibooks.org/wiki/OpenSCAD_User_Manual#The_OpenSCAD_Language_Reference

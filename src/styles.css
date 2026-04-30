@@ -220,6 +220,42 @@ pre {
   gap: 0.75rem;
 }
 
+.feedback-loop-card,
+.feedback-banner {
+  margin: 1rem 1rem 0;
+  padding: 0.85rem 0.95rem;
+  border-radius: 14px;
+  border: 1px solid #243244;
+  background: #101721;
+}
+
+.feedback-loop-card p,
+.feedback-banner p {
+  margin: 0.35rem 0 0;
+  color: #b8c8da;
+}
+
+.feedback-loop-card-repairing,
+.status-pill-repairing {
+  border-color: rgba(244, 186, 74, 0.35);
+  background: rgba(244, 186, 74, 0.12);
+  color: #ffd487;
+}
+
+.feedback-loop-card-error,
+.status-pill-error {
+  border-color: rgba(225, 95, 95, 0.35);
+  background: rgba(177, 58, 58, 0.16);
+  color: #ffb3b3;
+}
+
+.feedback-loop-card-success,
+.status-pill-success {
+  border-color: rgba(74, 143, 255, 0.35);
+  background: rgba(74, 143, 255, 0.12);
+  color: #9fcbff;
+}
+
 .message-card-user {
   background: #10161d;
 }
@@ -249,13 +285,15 @@ pre {
 }
 
 .tag,
-.preview-badge {
+.preview-badge,
+.status-pill {
   display: inline-flex;
   align-items: center;
   padding: 0.18rem 0.55rem;
   border-radius: 999px;
   background: rgba(74, 143, 255, 0.15);
   color: #8ec0ff;
+  border: 1px solid transparent;
 }
 
 .message-text {
