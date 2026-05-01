@@ -1,3 +1,4 @@
+import { getEnvValue } from '../../core/env';
 import type { AiProviderId } from '../../core/types';
 
 export type AiProviderDefinition = {
@@ -9,8 +10,8 @@ export type AiProviderDefinition = {
   endpointDisplay: string;
 };
 
-const LLAMA_CPP_BASE_URL = import.meta.env.VITE_LLAMACPP_BASE_URL ?? 'http://127.0.0.1:8080/';
-const OPENROUTER_BASE_URL = import.meta.env.VITE_OPENROUTER_BASE_URL ?? 'https://openrouter.ai/api/v1/';
+const LLAMA_CPP_BASE_URL = getEnvValue('VITE_LLAMACPP_BASE_URL', 'http://192.168.4.220:8080/');
+const OPENROUTER_BASE_URL = getEnvValue('VITE_OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1/');
 
 export const DEFAULT_PROVIDER_ID: AiProviderId = 'openrouter';
 

@@ -10,6 +10,7 @@ import type {
   ToolCallState,
 } from '../../core/types';
 import { parseCadParameters, patchParameterValue } from '../cad/parameters';
+import { lookupOpenScadDocs } from '../docs/openscadDocs';
 import { CAD_AGENT_PROMPT, STRICT_OPENSCAD_PROMPT } from './prompts';
 import type { ChatMessage, ChatRequest, ChatStreamChunk, ChatTool } from './chatCompletions';
 import { streamChatCompletions } from './chatCompletions';
@@ -18,6 +19,21 @@ import { getAiProvider } from './providers';
 const MODELS_REQUIRING_TOOL_PROVIDER_PARAMETERS = new Set<string>(['deepseek/deepseek-v4-pro']);
 
 const CAD_AGENT_TOOLS: ChatTool[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'lookup_openscad_docs',
+      description: 'Search the bundled OpenSCAD language reference for syntax, module, and language details.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+          maxResults: { type: 'number' },
+        },
+        required: ['query'],
+      },
+    },
+  },
   {
     type: 'function',
     function: {
@@ -80,6 +96,7 @@ type BuildParametricModelArtifactArgs = {
   baseCode?: string;
   error?: string;
   imageAttachments?: Attachment[];
+  docsContext?: string;
   signal?: AbortSignal;
   source?: CadArtifact['source'];
 };
@@ -206,7 +223,7 @@ export async function runCadAgent({
     throw error;
   }
 
-  if (!content.artifact && content.text) {
+  if (!content.artifact && content.text && !content.docsContext) {
     const extractedCode = extractOpenScadCode(content.text);
     if (extractedCode) {
       content = {
@@ -240,6 +257,7 @@ export async function buildParametricModelArtifact({
   baseCode,
   error,
   imageAttachments,
+  docsContext,
   signal,
   source = error ? 'assistant-repaired' : 'assistant-generated',
 }: BuildParametricModelArtifactArgs) {
@@ -248,13 +266,16 @@ export async function buildParametricModelArtifact({
   const repairInstruction = error
     ? `${promptText}\n\nFix this OpenSCAD model so it compiles and preserves the intended design.\n\n${error}`
     : promptText;
+  const promptWithDocs = docsContext
+    ? `${repairInstruction}\n\nRelevant OpenSCAD reference excerpts:\n${docsContext}\n\nFollow the reference excerpts exactly when they apply.`
+    : repairInstruction;
 
   const codeMessages: ChatMessage[] = [
     ...toChatMessages(conversation, supportsVision),
     ...(baseCode ? ([{ role: 'assistant', content: baseCode }] satisfies ChatMessage[]) : []),
     {
       role: 'user',
-      content: buildPromptBlocks(repairInstruction, supportsVision, imageAttachments),
+      content: buildPromptBlocks(promptWithDocs, supportsVision, imageAttachments),
     },
   ];
 
@@ -311,6 +332,10 @@ async function executeToolCall(args: {
 }) {
   const { toolCall } = args;
 
+  if (toolCall.name === 'lookup_openscad_docs') {
+    return executeLookupDocsTool(args);
+  }
+
   if (toolCall.name === 'build_parametric_model') {
     return executeBuildModelTool(args);
   }
@@ -322,6 +347,39 @@ async function executeToolCall(args: {
   const failedContent = markToolCallAsErrored(args.content, toolCall.id);
   args.sync(failedContent);
   return failedContent;
+}
+
+async function executeLookupDocsTool(args: {
+  toolCall: AccumulatedToolCall;
+  content: MessageContent;
+  sync: (nextContent?: MessageContent) => void;
+}) {
+  const parsedInput = safeJsonParse<{
+    query?: string;
+    maxResults?: number;
+  }>(args.toolCall.arguments);
+
+  console.log('[AI TOOL lookup_openscad_docs in]', {
+    toolCall: args.toolCall,
+    parsedInput,
+  });
+
+  if (!parsedInput?.query?.trim()) {
+    const failedContent = markToolCallAsErrored(args.content, args.toolCall.id);
+    args.sync(failedContent);
+    return failedContent;
+  }
+
+  const lookup = lookupOpenScadDocs(parsedInput.query, parsedInput.maxResults);
+  const nextContent = {
+    ...args.content,
+    toolCalls: removeToolCall(args.content.toolCalls, args.toolCall.id),
+    docsContext: lookup.context,
+    text: lookup.responseText,
+  } satisfies MessageContent;
+
+  args.sync(nextContent);
+  return nextContent;
 }
 
 async function executeBuildModelTool(args: {
@@ -364,6 +422,7 @@ async function executeBuildModelTool(args: {
       promptText: parsedInput.text || getLastUserText(args.conversation),
       baseCode: parsedInput.baseCode ?? latestArtifact?.code,
       error: parsedInput.error,
+      docsContext: args.content.docsContext,
       signal: args.signal,
       source: parsedInput.error ? 'assistant-repaired' : 'assistant-generated',
     });
@@ -771,6 +830,7 @@ function cloneMessageContent(content: MessageContent): MessageContent {
     ...content,
     attachments: content.attachments ? content.attachments.map(cloneAttachment) : undefined,
     toolCalls: content.toolCalls ? content.toolCalls.map((toolCall) => ({ ...toolCall })) : undefined,
+    docsContext: content.docsContext,
     artifact: content.artifact
       ? {
           ...content.artifact,

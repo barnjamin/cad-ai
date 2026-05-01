@@ -1,3 +1,4 @@
+import { getAppOrigin } from '../../core/env';
 import type { AiProviderId } from '../../core/types';
 
 export type ChatMessage = {
@@ -71,7 +72,7 @@ export async function streamChatCompletions(args: {
   }
 
   if (args.providerId === 'openrouter') {
-    headers['HTTP-Referer'] = window.location.origin;
+    headers['HTTP-Referer'] = getAppOrigin();
     headers['X-Title'] = 'Browser CAD AI';
   }
 

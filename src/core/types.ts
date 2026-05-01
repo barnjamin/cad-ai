@@ -104,6 +104,7 @@ export type MessageContent = {
   artifact?: CadArtifact;
   attachments?: Attachment[];
   toolCalls?: ToolCallState[];
+  docsContext?: string;
   error?: string;
 };
 

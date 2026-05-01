@@ -1,30 +1,42 @@
 # OpenSCAD Feedback Loop Improvement Plan
 
-## Status Update (Implemented)
+## Status Update (Current)
 
-The following parts of this plan are now implemented:
+The feedback-loop work now exists in **two layers**:
 
-- structured compile reports emitted from preview to app state,
-- artifact/version matching using `artifactId` + `codeHash`,
-- compile error normalization for repair prompts,
-- bounded one-shot auto-repair for compile failures,
-- user-visible repair/compile progress in both chat and preview UI,
-- stricter OpenSCAD prompting plus basic sanitation/validation of generated code.
+1. **App-integrated compile/repair flow**
+   - structured compile reports emitted from preview to app state,
+   - artifact/version matching using `artifactId` + `codeHash`,
+   - compile error normalization for repair prompts,
+   - bounded one-shot auto-repair for compile failures,
+   - user-visible repair/compile progress in chat and preview UI,
+   - stricter OpenSCAD prompting plus basic sanitation/validation of generated code.
+
+2. **New headless/lib-first evaluation flow**
+   - reusable feedback-loop core extracted into `src/lib/feedbackLoop/`,
+   - headless artifact generator in `src/lib/ai/buildArtifactHeadless.ts`,
+   - Node-friendly OpenSCAD compiler using bundled WASM in `src/lib/compiler/nodeOpenScadCompiler.ts`,
+   - CLI runner in `scripts/eval-feedback-loop.ts`,
+   - default prompt ladder in `src/lib/feedbackLoop/defaultCases.ts`,
+   - successful live smoke test against the llama.cpp endpoint at `http://192.168.4.220:8080` using `unsloth/Qwen3.6-27B-GGUF:Q4_K_XL`.
 
 What is **not** implemented yet:
 
+- app UI and headless eval do **not** yet share one single orchestration path,
 - multi-view preview snapshot capture,
 - vision-assisted repair using preview images,
-- user-invoked “fix preview” / visual mismatch workflow.
+- user-invoked “fix preview” / visual mismatch workflow,
+- richer semantic/geometry evaluation beyond compile success.
 
 ## Goal
-Improve the model generation and repair loop so the app can:
+Improve the model generation and repair loop so the system can:
 
 1. surface specific compile/runtime errors back to the LLM,
 2. automatically attempt targeted fixes,
-3. include rendered preview images from multiple viewpoints when useful,
-4. keep the user informed about what failed and what retry is happening,
-5. avoid endless retry loops.
+3. run both in-app and headlessly as reusable library code,
+4. include rendered preview images from multiple viewpoints when useful,
+5. keep the user informed about what failed and what retry is happening,
+6. avoid endless retry loops.
 
 ---
 
@@ -57,6 +69,46 @@ A robust loop needs:
 ---
 
 ## Proposed Design
+
+## Phase 0: Headless/lib-first workflow
+
+**Status:** Implemented
+
+### A. Extract reusable feedback-loop core
+Implemented in:
+- `src/lib/feedbackLoop/types.ts`
+- `src/lib/feedbackLoop/runFeedbackLoop.ts`
+- `src/lib/feedbackLoop/defaultCases.ts`
+
+The core loop now supports dependency injection for:
+- artifact generation,
+- artifact compilation,
+- bounded repair retries,
+- result summarization.
+
+### B. Add Node-friendly artifact generation adapter
+Implemented in:
+- `src/lib/ai/buildArtifactHeadless.ts`
+
+This provides a headless path that reuses the existing chat/provider behavior in a Node-friendly way without requiring the React app runtime.
+
+### C. Add Node-friendly OpenSCAD validation/compiler adapter
+Implemented in:
+- `src/lib/compiler/nodeOpenScadCompiler.ts`
+
+This uses the bundled OpenSCAD WASM directly in Node and returns compile reports compatible with the feedback loop.
+
+### D. Add CLI evaluation runner
+Implemented in:
+- `scripts/eval-feedback-loop.ts`
+- `package.json` script: `npm run eval:feedback-loop`
+
+This runner takes explicit env/config and can evaluate the default prompt ladder outside the app.
+
+### E. Remaining gap in the architecture
+Not implemented yet:
+- `useCadApp.ts` still owns its own app-side orchestration,
+- the app path has not yet been rewritten to call the new `src/lib/feedbackLoop` core directly.
 
 ## Phase 1: Structured compile feedback pipeline
 
@@ -337,6 +389,7 @@ Important invariants:
 ## Suggested Implementation Order
 
 ### Completed
+- Step 0
 - Step 1
 - Step 2
 - Step 3
@@ -344,10 +397,17 @@ Important invariants:
 - most of the prompt/sanitation work from Phase 5
 
 ### Remaining
+- Step 4.5
 - Step 5
 - Step 6
 - Step 7
 
+### Step 0
+Extract and stabilize the headless/lib-first runner:
+- reusable feedback-loop core,
+- Node-friendly generator adapter,
+- Node-friendly OpenSCAD compiler,
+- CLI runner with explicit config.
 
 ### Step 1
 Add structured compile report callbacks from preview to app.
@@ -360,6 +420,9 @@ Add one-shot auto-repair on compile failure using existing agent tooling.
 
 ### Step 4
 Add UI state for repair progress and failure reporting.
+
+### Step 4.5
+Refactor `useCadApp.ts` to consume the shared `src/lib/feedbackLoop` core so app and headless flows use the same orchestration.
 
 ### Step 5
 Add multi-view snapshot capture after successful preview renders.
@@ -407,12 +470,26 @@ Mitigation:
 
 ## Deliverables
 
+### Milestone 0: Headless evaluation workflow
+**Status: Done**
+- reusable feedback-loop core in `src/lib/feedbackLoop/`,
+- headless artifact generator,
+- Node-friendly OpenSCAD WASM compiler,
+- CLI runner via `npm run eval:feedback-loop`,
+- default evaluation case ladder,
+- validated with a live llama.cpp smoke test.
+
 ### Milestone 1: Robust compile error repair
 **Status: Done**
 - compile reports wired to app state,
 - normalized error extraction,
 - single automatic repair retry,
 - user-visible repair status.
+
+### Milestone 1.5: Shared orchestration across app + headless
+**Status: Not started**
+- move app-side loop ownership out of `useCadApp.ts`,
+- make app and headless paths call the same core runner.
 
 ### Milestone 2: Visual feedback support
 **Status: Not started**
@@ -428,13 +505,13 @@ Mitigation:
 ---
 
 ## Recommendation
-**Milestone 1 is now complete.**
+**Milestone 0 and Milestone 1 are now complete.**
 
-Recommended next step: **Milestone 2**.
+Recommended next step: **Milestone 1.5**.
 
 Reason:
-- the compile-feedback foundation is now in place,
-- stale result handling and retry limits are already established,
-- snapshot capture can now build on the existing repair state/UI plumbing.
+- the new headless path now works,
+- the app still has duplicate orchestration in `useCadApp.ts`,
+- unifying the loop before adding image-based repair will reduce drift and duplicated bug fixes.
 
-After Milestone 2, add the explicit user-driven visual correction workflow from Milestone 3.
+After Milestone 1.5, proceed to Milestone 2 for snapshot capture and vision-capable repair.
