@@ -1,4 +1,4 @@
-import type { ArtifactCompileReport, ConversationMessage } from '../../core/types.ts';
+import type { ArtifactCompileReport, CadArtifact, ConversationMessage } from '../../core/types.ts';
 import { formatCompileErrorForRepair, normalizeCompileError } from '../../services/cad/compileFeedback.ts';
 import type {
   FeedbackLoopCase,
@@ -13,16 +13,19 @@ export async function runFeedbackLoopCase(
   options: FeedbackLoopRunOptions = {},
 ): Promise<FeedbackLoopCaseResult> {
   const maxRepairs = Math.max(0, options.maxRepairs ?? 1);
-  const conversation = createConversation(testCase.prompt);
+  const conversation = testCase.conversation ?? createConversation(testCase.prompt);
   const attempts: FeedbackLoopCaseResult['attempts'] = [];
 
   let currentArtifact;
   try {
+    options.onGenerationStart?.(false);
     currentArtifact = await deps.generateArtifact({
       promptText: testCase.prompt,
       conversation,
       source: 'assistant-generated',
+      signal: options.signal,
     });
+    options.onGenerationSuccess?.(currentArtifact, false);
   } catch (error) {
     attempts.push({
       generationError: error instanceof Error ? error.message : 'Initial generation failed.',
@@ -32,6 +35,8 @@ export async function runFeedbackLoopCase(
 
   for (let repairIndex = 0; repairIndex <= maxRepairs; repairIndex += 1) {
     const compileReport = await deps.compileArtifact(currentArtifact);
+    options.onCompileComplete?.(compileReport);
+    
     const attempt = {
       artifact: pickArtifact(currentArtifact),
       compileReport,
@@ -52,19 +57,24 @@ export async function runFeedbackLoopCase(
     }
 
     const repairPrompt = formatCompileErrorForRepair(normalizedError, currentArtifact.code);
+    options.onRepairAttempt?.(repairPrompt);
+    
     attempts[attempts.length - 1] = {
       ...attempt,
       repairPrompt,
     };
 
     try {
+      options.onGenerationStart?.(true);
       currentArtifact = await deps.generateArtifact({
         promptText: testCase.prompt,
         conversation,
         baseCode: currentArtifact.code,
         error: repairPrompt,
         source: 'assistant-repaired',
+        signal: options.signal,
       });
+      options.onGenerationSuccess?.(currentArtifact, true);
     } catch (error) {
       attempts.push({
         generationError: error instanceof Error ? error.message : 'Repair generation failed.',
@@ -108,7 +118,7 @@ function pickArtifact(artifact: {
   title: string;
   code: string;
   codeHash: string;
-  source: string;
+  source: CadArtifact['source'];
 }) {
   return {
     id: artifact.id,

@@ -106,6 +106,7 @@ export type MessageContent = {
   toolCalls?: ToolCallState[];
   docsContext?: string;
   error?: string;
+  repairState?: RepairAttemptState;
 };
 
 export type ConversationMessage = {

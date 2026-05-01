@@ -11,6 +11,9 @@ import type {
 } from '../../core/types';
 import { parseCadParameters, patchParameterValue } from '../cad/parameters';
 import { lookupOpenScadDocs } from '../docs/openscadDocs';
+import { runFeedbackLoopCase } from '../../lib/feedbackLoop/runFeedbackLoop';
+import { compileArtifactHeadless } from './orchestrator';
+import type { FeedbackLoopDependencies } from '../../lib/feedbackLoop/types';
 import { CAD_AGENT_PROMPT, STRICT_OPENSCAD_PROMPT } from './prompts';
 import type { ChatMessage, ChatRequest, ChatStreamChunk, ChatTool } from './chatCompletions';
 import { streamChatCompletions } from './chatCompletions';
@@ -413,24 +416,51 @@ async function executeBuildModelTool(args: {
 
   try {
     const latestArtifact = getLatestArtifact(args.conversation, args.content);
-    const artifact = await buildParametricModelArtifact({
-      providerId: args.providerId,
-      apiKey: args.apiKey,
-      modelId: args.modelId,
-      supportsVision: args.supportsVision,
-      conversation: args.conversation,
-      promptText: parsedInput.text || getLastUserText(args.conversation),
-      baseCode: parsedInput.baseCode ?? latestArtifact?.code,
-      error: parsedInput.error,
-      docsContext: args.content.docsContext,
-      signal: args.signal,
-      source: parsedInput.error ? 'assistant-repaired' : 'assistant-generated',
-    });
+    let latestFullArtifact: CadArtifact | null = null;
+    
+    const deps: FeedbackLoopDependencies = {
+      generateArtifact: async (input) => {
+        const generated = await buildParametricModelArtifact({
+          providerId: args.providerId,
+          apiKey: args.apiKey,
+          modelId: args.modelId,
+          supportsVision: args.supportsVision,
+          conversation: input.conversation,
+          promptText: input.promptText,
+          baseCode: input.baseCode ?? latestArtifact?.code,
+          error: input.error,
+          docsContext: args.content.docsContext,
+          signal: input.signal,
+          source: input.source,
+        });
+        latestFullArtifact = generated;
+        return generated;
+      },
+      compileArtifact: compileArtifactHeadless,
+    };
+
+    const promptText = parsedInput.text || getLastUserText(args.conversation);
+    await runFeedbackLoopCase(
+      {
+        id: crypto.randomUUID(),
+        prompt: promptText,
+        conversation: args.conversation,
+      },
+      deps,
+      {
+        maxRepairs: 1,
+        signal: args.signal,
+      }
+    );
+
+    if (!latestFullArtifact) {
+      throw new Error('Feedback loop completed but no artifact was generated.');
+    }
 
     const nextContent = {
       ...args.content,
       toolCalls: removeToolCall(args.content.toolCalls, args.toolCall.id),
-      artifact,
+      artifact: latestFullArtifact,
       text: args.content.text,
     } satisfies MessageContent;
 

@@ -3,6 +3,7 @@ import type { ArtifactCompileReport, CadArtifact, ConversationMessage } from '..
 export type FeedbackLoopCase = {
   id: string;
   prompt: string;
+  conversation?: ConversationMessage[];
 };
 
 export type GenerateArtifactInput = {
@@ -11,6 +12,7 @@ export type GenerateArtifactInput = {
   baseCode?: string;
   error?: string;
   source?: CadArtifact['source'];
+  signal?: AbortSignal;
 };
 
 export type FeedbackLoopDependencies = {
@@ -21,6 +23,11 @@ export type FeedbackLoopDependencies = {
 
 export type FeedbackLoopRunOptions = {
   maxRepairs?: number;
+  onGenerationStart?: (isRepair: boolean) => void;
+  onGenerationSuccess?: (artifact: CadArtifact, isRepair: boolean) => void;
+  onCompileComplete?: (report: ArtifactCompileReport) => void;
+  onRepairAttempt?: (repairPrompt: string) => void;
+  signal?: AbortSignal;
 };
 
 export type FeedbackLoopAttempt = {
