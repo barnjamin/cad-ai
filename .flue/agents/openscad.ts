@@ -2,6 +2,7 @@ import type { FlueContext } from '@flue/sdk/client';
 import { safeParse } from 'valibot';
 import * as v from 'valibot';
 import { runOpenScadLoop } from '../../src/core/runOpenScadLoop';
+import { applyProviderApiKey, readLlmEnv } from '../../src/llm/env';
 
 export const triggers = { webhook: true };
 
@@ -38,8 +39,8 @@ export default async function ({ init, payload, env }: FlueContext) {
     };
   }
 
-  applyProviderEnv(env);
   const model = resolveModel(env);
+  applyProviderEnv(env, model);
 
   const agent = await init({
     sandbox: 'local',
@@ -60,31 +61,13 @@ export default async function ({ init, payload, env }: FlueContext) {
 }
 
 function resolveModel(env: FlueContext['env']) {
-  const explicitModel = readEnvString(env, 'FLUE_MODEL_ID');
-  if (explicitModel) return explicitModel;
-
-  const openRouterKey = readEnvString(env, 'OPENROUTER_API_KEY') ?? readEnvString(env, 'OPENROUTER_KEY');
-  const openRouterModel = readEnvString(env, 'OPENROUTER_MODEL_ID') ?? readEnvString(env, 'OPENROUTER_MODEL');
-
-  if (openRouterKey) {
-    return normalizeOpenRouterModelId(openRouterModel ?? DEFAULT_OPENROUTER_MODEL_ID);
-  }
-
+  const llm = readLlmEnv(env);
+  if (llm.modelId) return llm.modelId;
+  if (llm.apiKey) return DEFAULT_OPENROUTER_MODEL_ID;
   return DEFAULT_MODEL_ID;
 }
 
-function applyProviderEnv(env: FlueContext['env']) {
-  const openRouterKey = readEnvString(env, 'OPENROUTER_API_KEY') ?? readEnvString(env, 'OPENROUTER_KEY');
-  if (openRouterKey && !process.env.OPENROUTER_API_KEY) {
-    process.env.OPENROUTER_API_KEY = openRouterKey;
-  }
-}
-
-function readEnvString(env: FlueContext['env'], key: string) {
-  const value = env?.[key];
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function normalizeOpenRouterModelId(model: string) {
-  return model.startsWith('openrouter/') ? model : `openrouter/${model}`;
+function applyProviderEnv(env: FlueContext['env'], model: string) {
+  const llm = readLlmEnv(env);
+  applyProviderApiKey(model, llm.apiKey);
 }

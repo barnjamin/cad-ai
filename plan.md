@@ -11,8 +11,8 @@ Current top-level structure:
 - `.agents/skills/` — `specify`, `generate`, `revise`, `repair-compile`, `critique-visual`
 - `src/core/` — orchestration and shared types
 - `src/tools/` — compile, render, and hashing tools
-- `src/llm/` — llama.cpp client helpers
-- `scripts/run-llama-openscad.ts` — direct llama.cpp smoke test
+- `src/llm/` — OpenAI-compatible client helpers
+- `scripts/run-llm-openscad.ts` — direct LLM smoke test
 - `vendor/openscad-wasm/` — bundled OpenSCAD WASM runtime
 - `.artifacts/` — generated `.scad`, `.stl`, and preview images
 
@@ -68,7 +68,7 @@ Working now:
 - bundled WASM compile path in `src/tools/compileOpenScad.ts`
 - self-contained STL preview rendering in `src/tools/renderViews.ts`
 - bounded loop orchestration in `src/core/runOpenScadLoop.ts`
-- direct llama.cpp smoke-test script in `scripts/run-llama-openscad.ts`
+- direct OpenAI-compatible smoke-test script in `scripts/run-llm-openscad.ts`
 
 Still incomplete or intentionally limited:
 
@@ -76,7 +76,7 @@ Still incomplete or intentionally limited:
 - stronger change-preservation checks for revise mode
 - persisted regression fixtures and batch evaluation harness
 - richer artifact/attempt logging beyond the current response payload
-- llama.cpp wired into the main Flue runtime path as a first-class provider option
+- the direct OpenAI-compatible path wired into the main Flue runtime path as a first-class provider option
 
 ## Practical next steps
 
@@ -85,7 +85,7 @@ Still incomplete or intentionally limited:
 3. strengthen revise-mode preservation and diff summaries
 4. expose richer artifact paths/logs in the response contract
 5. decide whether to keep or rename the legacy `flue-rewrite` package name in `package.json`
-6. optionally wire the llama.cpp path into the primary agent runtime
+6. optionally wire the direct OpenAI-compatible path into the primary agent runtime
 
 ## Non-goals for now
 

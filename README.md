@@ -21,7 +21,7 @@ It accepts a natural-language prompt, generates or revises OpenSCAD, then runs a
 ├─ src/core/
 ├─ src/tools/
 ├─ src/llm/
-├─ scripts/run-llama-openscad.ts
+├─ scripts/run-llm-openscad.ts
 ├─ vendor/openscad-wasm/
 ├─ .artifacts/
 ├─ AGENTS.md
@@ -37,27 +37,25 @@ From the repo root:
 npm install
 ```
 
-Create a `.env` file with whichever provider settings you want to use.
+Create a `.env` file with the shared LLM settings.
 
 Common options:
 
 ```bash
-# Optional explicit model override for the Flue agent
-FLUE_MODEL_ID="anthropic/claude-sonnet-4-6"
-
-# If using OpenRouter, the agent auto-selects an OpenRouter model when a key is present
-OPENROUTER_API_KEY="..."
-OPENROUTER_MODEL_ID="moonshotai/kimi-k2.6"
-# or FLUE_MODEL_ID="openrouter/moonshotai/kimi-k2.6"
+# Used by both the Flue agent and the direct OpenAI-compatible smoke test script.
+LLM_MODEL_ID="openrouter/moonshotai/kimi-k2.6"
+LLM_API_KEY="..."
+LLM_BASE_URL="http://192.168.4.220:8080/"
+LLM_MAX_TOKENS="4096"
 ```
 
-For the direct llama.cpp smoke test script:
+Notes:
 
-```bash
-VITE_LLAMACPP_BASE_URL="http://192.168.4.220:8080/"
-LLAMACPP_MODEL_ID=""
-LLAMACPP_MAX_TOKENS="4096"
-```
+- `LLM_MODEL_ID` is the single model selector used everywhere in this repo.
+- For OpenRouter, use a fully qualified model id like `openrouter/moonshotai/kimi-k2.6`.
+- `LLM_BASE_URL` is mainly used by the direct OpenAI-compatible smoke test script.
+- If `LLM_MODEL_ID` is omitted but `LLM_API_KEY` is set, the agent defaults to `openrouter/moonshotai/kimi-k2.6`.
+- If both are omitted, the agent falls back to `anthropic/claude-sonnet-4-6`.
 
 ## Run the agent locally
 
@@ -136,7 +134,7 @@ npm run build
 npm run typecheck
 npm run run:sample:create
 npm run run:sample:revise
-npm run run:llama -- "Create a centered cube with a cylindrical hole through it."
+npm run run:llm -- "Create a centered cube with a cylindrical hole through it."
 ```
 
 ## What the agent returns
@@ -158,4 +156,4 @@ The webhook response includes:
 - Compile validation uses the vendored OpenSCAD WASM toolchain in `vendor/openscad-wasm/`.
 - Preview rendering is self-contained: SCAD is compiled to STL, then rasterized into PNG views inside `.artifacts/`.
 - Visual critique is bounded; the loop does not repair indefinitely.
-- The direct llama.cpp script is a separate smoke-test path and is not yet the default runtime path for the main Flue agent.
+- The direct OpenAI-compatible script in `scripts/run-llm-openscad.ts` is a separate smoke-test path and is not yet the default runtime path for the main Flue agent.

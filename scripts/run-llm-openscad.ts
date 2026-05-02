@@ -2,32 +2,34 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { compileOpenScad } from '../src/tools/compileOpenScad.ts';
 import { hashProgram } from '../src/tools/hashProgram.ts';
-import { generateOpenScadWithLlamaCpp, listLlamaCppModels, pickDefaultModel } from '../src/llm/llamaCppClient.ts';
+import { generateOpenScadWithOpenAiCompatibleApi, listOpenAiCompatibleModels, pickDefaultModel } from '../src/llm/openAiCompatibleClient.ts';
+import { readLlmEnv } from '../src/llm/env.ts';
 
 const prompt = process.argv.slice(2).join(' ').trim() || 'Create a small parametric box with a centered cylindrical hole.';
-const baseUrl = process.env.VITE_LLAMACPP_BASE_URL ?? 'http://192.168.4.220:8080/';
-
-const maxTokens = Number(process.env.LLAMACPP_MAX_TOKENS ?? '4096');
-const models = await listLlamaCppModels(baseUrl);
+const llm = readLlmEnv();
+const baseUrl = llm.baseUrl;
+const maxTokens = llm.maxTokens;
+const models = await listOpenAiCompatibleModels(baseUrl, llm.apiKey);
 const loaded = models.filter((model) => model.status?.value === 'loaded').map((model) => model.id);
-const model = process.env.LLAMACPP_MODEL_ID ?? pickDefaultModel(models);
+const model = llm.modelId ?? pickDefaultModel(models);
 
 if (!model) {
-  throw new Error(`No llama.cpp models available at ${baseUrl}`);
+  throw new Error(`No models available at ${baseUrl}`);
 }
 
-console.log('llama.cpp base URL:', baseUrl.replace(/\/$/, ''));
+console.log('LLM base URL:', baseUrl.replace(/\/$/, ''));
 console.log('Loaded models:', loaded.length ? loaded.join(', ') : '(none reported as loaded)');
 console.log('Selected model:', model);
 console.log('Prompt:', prompt);
 console.log('Max tokens:', maxTokens);
 console.log('---');
 
-const result = await generateOpenScadWithLlamaCpp({
+const result = await generateOpenScadWithOpenAiCompatibleApi({
   prompt,
   model,
   baseUrl,
   maxTokens,
+  apiKey: llm.apiKey ?? undefined,
 });
 
 const artifactDir = path.resolve(process.cwd(), '.artifacts');

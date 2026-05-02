@@ -8,7 +8,7 @@
     "typecheck": "tsc --noEmit",
     "run:sample:create": "flue run openscad --target node --id sample-create --env .env --payload '{\"mode\":\"create\",\"prompt\":\"Create a simple parametric box with a centered cylindrical hole.\"}'",
     "run:sample:revise": "flue run openscad --target node --id sample-revise --env .env --payload '{\"mode\":\"revise\",\"prompt\":\"Make the box taller and widen the hole.\",\"currentCode\":\"difference() { cube([20,20,10], center=true); cylinder(h=20, r=3, center=true, $fn=48); }\"}'",
-    "run:llama": "node scripts/run-llama-openscad.ts"
+    "run:llm": "node scripts/run-llm-openscad.ts"
   },
   "dependencies": {
     "@flue/sdk": "latest",

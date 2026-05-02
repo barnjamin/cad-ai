@@ -6,7 +6,7 @@ Current workspace layout:
 - `.agents/skills/` — task-specific skills
 - `src/core/` — orchestration/types
 - `src/tools/` — compile/render/hash helpers
-- `src/llm/` — llama.cpp helpers
+- `src/llm/` — OpenAI-compatible LLM helpers
 - `.artifacts/` — generated SCAD, STL, and preview PNGs
 - `vendor/openscad-wasm/` — bundled OpenSCAD WASM runtime
 

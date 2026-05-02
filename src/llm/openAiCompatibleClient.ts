@@ -1,6 +1,11 @@
-const DEFAULT_BASE_URL = process.env.VITE_LLAMACPP_BASE_URL ?? 'http://192.168.4.220:8080/';
+import { buildLlmHeaders, readLlmEnv } from './env';
 
-export type LlamaCppModel = {
+const DEFAULT_LLM = readLlmEnv();
+const DEFAULT_BASE_URL = DEFAULT_LLM.baseUrl;
+const DEFAULT_API_KEY = DEFAULT_LLM.apiKey;
+const DEFAULT_MAX_TOKENS = DEFAULT_LLM.maxTokens;
+
+export type OpenAiCompatibleModel = {
   id: string;
   object?: string;
   owned_by?: string;
@@ -20,32 +25,33 @@ Do not output placeholders like TODO.
 If repairing code, preserve the original design intent while fixing syntax or structural issues.
 If the request is unrelated to OpenSCAD or 3D CAD, return exactly 404.`;
 
-export async function listLlamaCppModels(baseUrl = DEFAULT_BASE_URL) {
-  const response = await fetch(joinUrl(baseUrl, 'v1/models'));
+export async function listOpenAiCompatibleModels(baseUrl = DEFAULT_BASE_URL, apiKey = DEFAULT_API_KEY) {
+  const response = await fetch(joinUrl(baseUrl, 'v1/models'), {
+    headers: buildLlmHeaders(apiKey),
+  });
   if (!response.ok) {
-    throw new Error(`Failed to load llama.cpp models: ${response.status}`);
+    throw new Error(`Failed to load models from the configured LLM endpoint: ${response.status}`);
   }
 
-  const payload = (await response.json()) as { data?: LlamaCppModel[] };
+  const payload = (await response.json()) as { data?: OpenAiCompatibleModel[] };
   return Array.isArray(payload.data) ? payload.data : [];
 }
 
-export async function generateOpenScadWithLlamaCpp(args: {
+export async function generateOpenScadWithOpenAiCompatibleApi(args: {
   prompt: string;
   model: string;
   baseUrl?: string;
   baseCode?: string;
   maxTokens?: number;
+  apiKey?: string;
 }) {
   const response = await fetch(joinUrl(args.baseUrl ?? DEFAULT_BASE_URL, 'v1/chat/completions'), {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: buildLlmHeaders(args.apiKey ?? DEFAULT_API_KEY),
     body: JSON.stringify({
       model: args.model,
       stream: false,
-      max_tokens: args.maxTokens ?? 1024,
+      max_tokens: args.maxTokens ?? DEFAULT_MAX_TOKENS,
       messages: [
         { role: 'system', content: STRICT_OPENSCAD_PROMPT },
         ...(args.baseCode ? [{ role: 'assistant', content: args.baseCode }] : []),
@@ -55,7 +61,7 @@ export async function generateOpenScadWithLlamaCpp(args: {
   });
 
   if (!response.ok) {
-    throw new Error((await response.text()) || `llama.cpp request failed: ${response.status}`);
+    throw new Error((await response.text()) || `LLM request failed: ${response.status}`);
   }
 
   const payload = (await response.json()) as {
@@ -80,7 +86,7 @@ export async function generateOpenScadWithLlamaCpp(args: {
   };
 }
 
-export function pickDefaultModel(models: LlamaCppModel[]) {
+export function pickDefaultModel(models: OpenAiCompatibleModel[]) {
   return models.find((model) => model.status?.value === 'loaded')?.id ?? models[0]?.id ?? null;
 }
 
