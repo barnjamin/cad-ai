@@ -1,4 +1,14 @@
-You are working in an isolated Flue workspace for OpenSCAD generation.
+You are working in the root OpenSCAD Flue workspace.
+
+Current workspace layout:
+- `.flue/agents/openscad.ts` — webhook entrypoint
+- `.flue/roles/` — OpenSCAD coder and critic roles
+- `.agents/skills/` — task-specific skills
+- `src/core/` — orchestration/types
+- `src/tools/` — compile/render/hash helpers
+- `src/llm/` — llama.cpp helpers
+- `.artifacts/` — generated SCAD, STL, and preview PNGs
+- `vendor/openscad-wasm/` — bundled OpenSCAD WASM runtime
 
 Project goals:
 - Create an initial valid OpenSCAD program from a user prompt.

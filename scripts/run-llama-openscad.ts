@@ -7,7 +7,7 @@ import { generateOpenScadWithLlamaCpp, listLlamaCppModels, pickDefaultModel } fr
 const prompt = process.argv.slice(2).join(' ').trim() || 'Create a small parametric box with a centered cylindrical hole.';
 const baseUrl = process.env.VITE_LLAMACPP_BASE_URL ?? 'http://192.168.4.220:8080/';
 
-const maxTokens = Number(process.env.LLAMACPP_MAX_TOKENS ?? '1024');
+const maxTokens = Number(process.env.LLAMACPP_MAX_TOKENS ?? '4096');
 const models = await listLlamaCppModels(baseUrl);
 const loaded = models.filter((model) => model.status?.value === 'loaded').map((model) => model.id);
 const model = process.env.LLAMACPP_MODEL_ID ?? pickDefaultModel(models);
