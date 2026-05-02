@@ -1,8 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+// @ts-expect-error vendored Emscripten bundle has no TypeScript declarations.
 import openscad from '../../vendor/openscad-wasm/openscad.js';
 import type { CompileResult } from '../core/types.ts';
 import { hashProgram } from './hashProgram.ts';
+
+const wasmFileUrl = new URL('../../vendor/openscad-wasm/openscad.wasm', import.meta.url);
 
 type OpenScadInstance = Awaited<ReturnType<typeof openscad>>;
 
@@ -126,11 +129,9 @@ async function getInstance(cwd: string) {
   });
 }
 
-async function getWasmBinary(cwd: string) {
+async function getWasmBinary(_cwd: string) {
   if (!wasmBinaryPromise) {
-    wasmBinaryPromise = fs
-      .readFile(path.resolve(cwd, 'vendor/openscad-wasm/openscad.wasm'))
-      .then((buffer) => new Uint8Array(buffer));
+    wasmBinaryPromise = fs.readFile(wasmFileUrl).then((buffer) => new Uint8Array(buffer));
   }
 
   return wasmBinaryPromise;

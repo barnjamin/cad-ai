@@ -1,13 +1,5 @@
-# flue-rewrite
+# AI Assisted OpenSCAD generation 
 
-Isolated Flue workspace for the OpenSCAD rewrite.
-
-## Default choices
-
-- Target: Node.js
-- Layout: `.flue` workspace layout inside `flue-rewrite/`
-- Default model: `anthropic/claude-sonnet-4-6`
-- If `OPENROUTER_API_KEY` or `OPENROUTER_KEY` is set and `FLUE_MODEL_ID` is empty, the agent defaults to `openrouter/moonshotai/kimi-k2.6`
 
 ## Commands
 

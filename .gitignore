@@ -1,6 +1,4 @@
 .env
+.artifacts
 dist
 node_modules
-*.d.ts
-*.js
-*.tsbuildinfo
