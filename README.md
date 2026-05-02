@@ -1,52 +1,48 @@
-# Browser CAD AI
+# flue-rewrite
 
-A standalone browser-based AI CAD app focused on a clean core workflow:
+Isolated Flue workspace for the OpenSCAD rewrite.
 
-- conversational design brief -> AI planning -> OpenSCAD generation
-- local OpenSCAD WASM preview and STL export
-- parsed parametric controls for quick iteration
-- optional image references passed inline to the model
+## Default choices
 
-## Stack
+- Target: Node.js
+- Layout: `.flue` workspace layout inside `flue-rewrite/`
+- Default model: `anthropic/claude-sonnet-4-6`
+- If `OPENROUTER_API_KEY` or `OPENROUTER_KEY` is set and `FLUE_MODEL_ID` is empty, the agent defaults to `openrouter/moonshotai/kimi-k2.6`
 
-- React + Vite + TypeScript
-- OpenRouter for LLM access
-- local OpenSCAD WASM worker for preview/export
-- Three.js / React Three Fiber for geometry viewing
-
-## Product direction
-
-This refactor treats the project as a standalone browser CAD workbench rather than a trimmed copy of CADAM.
-The emphasis is on:
-
-- a clear separation between app state, AI orchestration, and CAD runtime services
-- a parameter-first OpenSCAD artifact model
-- browser-local preview/export with minimal server assumptions
-- easy future extension for persistence, file workspaces, repair loops, or more CAD tools
-
-## Development
+## Commands
 
 ```bash
+cd flue-rewrite
 npm install
+cp .env.example .env
 npm run dev
 ```
 
-## Configuration
+OpenRouter setup example:
 
-Provide an OpenRouter API key either by:
+```bash
+OPENROUTER_API_KEY="..."
+OPENROUTER_MODEL_ID="moonshotai/kimi-k2.6"
+# or FLUE_MODEL_ID="openrouter/moonshotai/kimi-k2.6"
+```
 
-1. copying `.env.example` to `.env.local` and setting `VITE_OPENROUTER_API_KEY`, or
-2. pasting the key into the app UI.
+Sample invocation:
+
+```bash
+curl http://localhost:3583/agents/openscad/test-1 \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"create","prompt":"Create a simple parametric box with a centered cylindrical hole."}'
+```
+
+Direct llama.cpp smoke test using the original project's OpenAI-compatible connection pattern:
+
+```bash
+npm run run:llama -- "Create a centered cube with a cylindrical hole through it."
+```
 
 ## Notes
 
-- The LLM API key is used directly in the browser, so this is intended for local/dev or trusted personal use.
-- Conversation state is currently in-memory only.
-- OpenSCAD compilation and export stay local in the browser worker.
-- Visual styling is intentionally minimal; the core architecture is the focus.
-
-
-
-# OpenSCAD Language Reference
-
-https://en.wikibooks.org/wiki/OpenSCAD_User_Manual#The_OpenSCAD_Language_Reference
+- The agent now runs a bounded spec -> generate/revise -> compile -> render -> critique loop.
+- Compile validation uses the bundled OpenSCAD WASM toolchain.
+- Preview rendering is self-contained: SCAD is compiled to STL with WASM, then rasterized to PNG views inside the workspace.
+- The visual critique stage consumes those rendered views, and the loop can perform bounded visual revisions when critique fails.
